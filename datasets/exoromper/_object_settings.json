@@ -1,0 +1,32 @@
+{
+	"exported_object_classes": [
+		"ExoRomper_FullPayload",
+		"ExoRomper_Sat"
+	],
+	"exported_objects": [
+		{
+			"class": "ExoRomper_FullPayload",
+			"segmentation_class_id": 0,
+			"segmentation_instance_id": 0,
+			"fixed_model_transform": [
+				[ 0, -20, 0, 0 ],
+				[ -20, 0, 0, 0 ],
+				[ 0, 0, -20, 0 ],
+				[ 13.031700134277344, 6.2897000312805176, -0.68129998445510864, 1 ]
+			],
+			"cuboid_dimensions": [ 59.089801788330078, 41.200000762939453, 38.582698822021484 ]
+		},
+		{
+			"class": "ExoRomper_Sat",
+			"segmentation_class_id": 255,
+			"segmentation_instance_id": 0,
+			"fixed_model_transform": [
+				[ 0, 0, 1, 0 ],
+				[ -1, 0, 0, 0 ],
+				[ 0, -1, 0, 0 ],
+				[ 0, 13.557499885559082, 0, 1 ]
+			],
+			"cuboid_dimensions": [ 16.00200080871582, 27.745000839233398, 25.399999618530273 ]
+		}
+	]
+}
