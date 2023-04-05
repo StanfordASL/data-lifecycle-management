@@ -1,24 +1,24 @@
 from .utils import PyTorchSatellitePoseEstimationDataset, PyTorchSatellitePoseEstimationDatasetNoisy, PyTorchExoRomperDataset, set_seeds
 import torch
+import torch.nn as nn
 from torchvision import transforms, models
 from torch.utils.data import DataLoader
+from torchvision.datasets import MNIST, FashionMNIST, KMNIST, EMNIST
 import shutil
 import numpy as np
 import datetime
 import PIL
-""" 
-    Example script demonstrating training on the SPEED dataset using PyTorch.
-    Usage example: python pytorch_example.py --dataset [path to speed] --epochs [num epochs] --batch [batch size]
-"""
+import scod
+
 def random_number(seed = None):
     set_seeds() if seed == None else set_seeds(seed)
     return torch.rand(1)    
 
-def refine_model(model, optimizer, inputs, labels, num_epochs, spec_lr = 0.001, verbose = False):
+def refine_model(model, optimizer, inputs, labels, num_epochs, dataset_name, spec_lr = 0.001, verbose = False):
     # https://machinelearningmastery.com/update-neural-network-models-with-more-data/
     # Batch new data?
     # Ensemble model?
-    _, _, _, criterion, device = set_up_model(spec_lr=spec_lr) # Can be reduced to not overfit
+    _, _, _, criterion, device = set_up_model(dataset_name, spec_lr=spec_lr) # Can be reduced to not overfit
     for epoch in range(num_epochs):
         verbose and print('Epoch {}/{}'.format(epoch+1, num_epochs))
         verbose and print('-' * 10)
@@ -29,7 +29,15 @@ def refine_model(model, optimizer, inputs, labels, num_epochs, spec_lr = 0.001, 
         optimizer.zero_grad()
         with torch.set_grad_enabled(True):
             outputs = model(inputs)
-            loss = criterion(outputs, labels.float().cuda())
+            if criterion is None:
+                dist_layer = scod.distributions.CategoricalLogitLayer()
+                dist = dist_layer(outputs)
+                prob_loss = -dist.log_prob(labels)
+                mean_loss = prob_loss.mean()
+                regularization = torch.sum(torch.stack([torch.norm(p)**2 for p in model.parameters()])) / 2e3
+                loss = mean_loss + regularization
+            else:
+                loss = criterion(outputs, labels.float().cuda())
             loss.backward()
             optimizer.step()
         current_loss = loss.item() * inputs.size(0)
@@ -144,9 +152,13 @@ def load_ckp(checkpoint_fpath, model, optimizer):
 
 def load_model_from_ckp(load_model_path):
     # Set up model
-    initialized_model, exp_lr_scheduler, sgd_optimizer, criterion, device = set_up_model()
+    if "ex" in load_model_path:
+        dataset_name = 'exoromper'
+    elif 'mnist' in load_model_path:
+        dataset_name = 'mnist'
+    initialized_model, scheduler, optimizer, criterion, device = set_up_model(dataset_name)
     # Load model from the saved checkpoint
-    model, optimizer, start_epoch_idx, valid_loss = load_ckp(load_model_path, initialized_model, sgd_optimizer)
+    model, optimizer, start_epoch_idx, valid_loss = load_ckp(load_model_path, initialized_model, optimizer)
     return model, optimizer, start_epoch_idx, valid_loss, criterion, device
 
 def evaluate_model(load_model_path, dataloader, position_only=True):
@@ -214,12 +226,13 @@ def single_model_eval(load_model_path, img, position_only=False):
 
 def create_dataloaders(root, batch_size, dataset_name = "speed"):
     torch.manual_seed(11) # so train/test split is reproducible   
-     
-    # Processing to match pre-trained networks
-    data_transforms = transforms.Compose([
-        transforms.Resize((224, 224)),
-        transforms.ToTensor(),
-        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
+    
+    if dataset_name == "speed" or dataset_name == "exoromper":
+        # Processing to match pre-trained networks
+        data_transforms = transforms.Compose([
+            transforms.Resize((224, 224)),
+            transforms.ToTensor(),
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
 
     if dataset_name == "speed":
         # Loading training set, using 20% for validation, 10% for test
@@ -271,7 +284,6 @@ def create_dataloaders(root, batch_size, dataset_name = "speed"):
                     'test_10': test_dataset_10, 
                     'test_50': test_dataset_50, 
                     'test_90': test_dataset_90}
-        dnames = ['train', 'val', 'test', 'test_000', 'test_0001', 'test_0005', 'test_001', 'test_01', 'test_10', 'test_50', 'test_90']
     elif dataset_name == "exoromper":
         full_dataset = PyTorchExoRomperDataset('all', root, data_transforms, debug_mode=False)
         train_and_val_dataset, test_dataset = torch.utils.data.random_split(full_dataset, [int(len(full_dataset) * .9),
@@ -287,28 +299,64 @@ def create_dataloaders(root, batch_size, dataset_name = "speed"):
                     'space': space_dataset,
                     'earth': earth_dataset,
                     'lens_flare': lens_flare_dataset}
-        dnames = ['all_train', 'all_val', 'all_test', 'space', 'earth', 'lens_flare']
+    elif dataset_name == "mnist":
+        mnist_dataset = MNIST(root="~/data/",train=True,download=True,transform=transforms.Compose([
+                                transforms.ToTensor(),
+                                transforms.Normalize((0.1307,),(0.3801,))
+                            ]))
+        mnist_train, mnist_test = torch.utils.data.random_split(mnist_dataset, [int(len(mnist_dataset) * .8),
+                                                                                int(len(mnist_dataset) - int(len(mnist_dataset) * .8))])
+        fashion_dataset = FashionMNIST(root="~/data/",train=True,download=True,transform=transforms.Compose([
+                                transforms.ToTensor(),
+                                transforms.Normalize((0.1307,),(0.3801,))
+                            ]))
+        datasets = {'mnist_train': mnist_train,
+                    'mnist_test': mnist_test,
+                    'fashion': fashion_dataset}
+    
+    dnames = list(datasets.keys())
     dataloaders = {x: DataLoader(datasets[x], batch_size=batch_size, shuffle=True, num_workers=8) for x in dnames}
     dataset_sizes = {x: len(datasets[x]) for x in dnames}
     return dataloaders, dataset_sizes
 
-def set_up_model(spec_lr = 0.001):
+def set_up_model(dataset_name, spec_lr = 0.001):
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     # print("CUDA IS AVAILABLE? ",torch.cuda.is_available())
     
+    if 'exoromper' in dataset_name:
+        # Getting pre-trained model and replacing the last fully connected layer
+        initialized_model = models.resnet18(pretrained=True)
+        num_ftrs = initialized_model.fc.in_features
+        initialized_model.fc = torch.nn.Linear(num_ftrs, 3)
+        initialized_model = initialized_model.to(device)  # Note: we are finetuning the model (all params trainable)
 
-    # Getting pre-trained model and replacing the last fully connected layer
-    initialized_model = models.resnet18(pretrained=True)
-    num_ftrs = initialized_model.fc.in_features
-    initialized_model.fc = torch.nn.Linear(num_ftrs, 3)
-    initialized_model = initialized_model.to(device)  # Note: we are finetuning the model (all params trainable)
+        # Setting up the learning process
+        criterion = torch.nn.MSELoss()
+        optimizer = torch.optim.SGD(initialized_model.parameters(), lr=spec_lr, momentum=0.9)  # all params trained
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=7, gamma=0.1)
+    elif 'mnist' in dataset_name:
+        # DNN mapping 2d input to 1d distribution parameter
+        # LeNet v5
+        initialized_model = nn.Sequential(
+                nn.Conv2d(1, 6, 5, 1),
+                nn.ReLU(),
+                nn.AvgPool2d(2),
+                nn.Conv2d(6, 16, 5, 1),
+                nn.ReLU(),
+                nn.AvgPool2d(2),
+                nn.Flatten(),
+                nn.Linear(256, 120),
+                nn.ReLU(),
+                nn.Linear(120,84),
+                nn.ReLU(),
+                nn.Linear(84,10)
+            )
+        initialized_model = initialized_model.to(device)
+        criterion = None # Custom loss to be specified during training
+        optimizer = torch.optim.Adam(initialized_model.parameters(), lr=1e-2)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, 100)
 
-    # Setting up the learning process
-    criterion = torch.nn.MSELoss()
-    sgd_optimizer = torch.optim.SGD(initialized_model.parameters(), lr=spec_lr, momentum=0.9)  # all params trained
-    exp_lr_scheduler = torch.optim.lr_scheduler.StepLR(sgd_optimizer, step_size=7, gamma=0.1)
-
-    return initialized_model, exp_lr_scheduler, sgd_optimizer, criterion, device
+    return initialized_model, scheduler, optimizer, criterion, device
 
 def main(num_epochs, dataloaders, dataset_sizes, resume=False, load_model_path=''):
 

@@ -317,20 +317,34 @@ class SatellitePoseEstimationDataset:
         return
 
 
-def init_scod(model, dataloader_to_process):
-    # here, we interpret the output of the DNN as the mean of a Gaussian
-    dist_constructor = lambda theta: scod.distributions.Normal(loc=theta, scale=1.)
-    unc_model = scod.SCOD(model, dist_constructor, args={
-        'num_eigs': 2,
-        'sketch_type': 'srft',
-    }, parameters=list(model.parameters())[-4:])
-    unc_model.process_dataloader(dataloader_to_process)
+def init_scod(model, dataloader_to_process, dataset_name):
+    if "exoromper" in dataset_name or "speed" in dataset_name:
+        # here, we interpret the output of the DNN as the mean of a Gaussian
+        dist_constructor = lambda theta: scod.distributions.Normal(loc=theta, scale=1.)
+        unc_model = scod.SCOD(model, dist_constructor, args={
+            'num_eigs': 2,
+            'sketch_type': 'srft',
+        }, parameters=list(model.parameters())[-4:])
+        unc_model.process_dataloader(dataloader_to_process)
+    elif "mnist" in dataset_name:
+        unc_model = scod.SCOD(model, args={
+            'num_eigs': 100,
+            'num_samples': 304,
+            'sketch_type': 'srft',
+        })
+        dist_layer = scod.distributions.CategoricalLogitLayer()
+        unc_model.process_dataloader(dataloader_to_process, dist_layer)
     return unc_model
 
-def eval_scod(input, unc_model):
-    yhats, sigs = unc_model(torch.unsqueeze(input,0).cuda())
-    unc = sigs.cpu().detach().numpy()
-    # print("Uncertainty value:", unc)
+def eval_scod(input, unc_model, dist_layer = None):
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    yhats, sigs = unc_model(input.to(device).unsqueeze(0))
+    if dist_layer is None:
+        unc = sigs.cpu().detach().numpy()
+        # print("Uncertainty value:", unc)
+    else:
+        dist = dist_layer.marginalize_gaussian(yhats, sigs)
+        unc = dist.entropy().cpu().detach().numpy()
     return unc
 
 def sample_pred_scod(dnames, dataloaders, model, unc_model):

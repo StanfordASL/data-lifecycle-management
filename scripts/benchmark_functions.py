@@ -12,7 +12,7 @@ from .utils import init_scod, eval_scod, plot_images, set_seeds
 
 
 
-def benchmark_individual(OOD_flagger, model, optimizer, refine_model, loss, test_seq, labels, num_refine_epochs = 4, refine_lr = 0.001):
+def benchmark_individual(OOD_flagger, model, optimizer, refine_model, loss, test_seq, labels, dataset_name, num_refine_epochs = 4, refine_lr = 0.001):
     flagged = np.zeros(len(test_seq))
     outs    = np.zeros_like(labels)
     for ind, input in enumerate(test_seq):
@@ -23,7 +23,7 @@ def benchmark_individual(OOD_flagger, model, optimizer, refine_model, loss, test
         else:
             print("FLAGGED at index ",ind)
             true_label = labels[ind]
-            model = refine_model(model, optimizer, input, true_label, num_refine_epochs, spec_lr=refine_lr)
+            model = refine_model(model, optimizer, input, true_label, num_refine_epochs, dataset_name, spec_lr=refine_lr)
             flagged[ind] = True
             outs[ind] = model(input).detach().cpu()
     # Calculate metrics
@@ -33,7 +33,13 @@ def benchmark_individual(OOD_flagger, model, optimizer, refine_model, loss, test
     accuracy = -np.array([loss(out, labels[ind].detach().cpu().numpy()) for ind, out in enumerate(outs)])
     return relabel_cost, accuracy
 
-def benchmark_batch(OOD_flagger_batch, model, optimizer, refine_model, loss, test_seq, labels, num_refine_epochs = 300, refine_lr = 0.1, verbose = False):
+def output(model, inp, label):
+    current_out = model(torch.unsqueeze(inp,0)).detach().cpu()
+    if not (current_out.shape == label.shape):
+        current_out = np.argmax(current_out.numpy())
+    return current_out
+
+def benchmark_batch(OOD_flagger_batch, model, optimizer, refine_model, loss, test_seq, labels, dataset_name, num_refine_epochs = 300, refine_lr = 0.1, verbose = False):
     num_batches, batch_size, _, _, _ = test_seq.shape
     flagged = np.zeros((num_batches, batch_size))
     outs    = np.zeros_like(labels)
@@ -44,20 +50,21 @@ def benchmark_batch(OOD_flagger_batch, model, optimizer, refine_model, loss, tes
         flags = OOD_flagger_batch(input) # returns a flag for each img in input
         for i in range(batch_size):
             flag = flags[i]
-            current_out = model(torch.unsqueeze(input[i],0)).detach().cpu()
+            inp = input[i]
+            true_label = labels[bidx,i]
+            current_out = output(model, inp, true_label)
             if not flag:
-                verbose and print("True label:", labels[bidx, i])
+                verbose and print("True label:", true_label)
                 verbose and print("Output:", current_out)
                 outs[bidx, i] = current_out
             else:
-                true_label = labels[bidx, i]
                 verbose and print("True label:", true_label)
                 verbose and print("FLAGGED input ", i, " in batch ", bidx)
                 verbose and print("Before refinement output:", current_out)
-                verbose and print("Before refinement loss:",loss(current_out, labels[bidx, i].detach().cpu()))
-                model = refine_model(model, optimizer, torch.unsqueeze(input[i],0), true_label, num_refine_epochs, spec_lr=refine_lr)
+                verbose and print("Before refinement loss:",loss(current_out, true_label.detach().cpu()))
+                model = refine_model(model, optimizer, torch.unsqueeze(input[i],0), true_label, num_refine_epochs, dataset_name, spec_lr=refine_lr)
                 flagged[bidx, i] = True
-                outs[bidx, i] = model(torch.unsqueeze(input[i],0)).detach().cpu()
+                outs[bidx, i] = output(model, inp, true_label)
                 verbose and print("After refinement output:", outs[bidx, i])
                 verbose and print("After refinement loss:",loss(torch.from_numpy(outs[bidx, i]), labels[bidx, i].detach().cpu()))
             mse_loss = loss(torch.from_numpy(outs[bidx,i]), labels[bidx, i].detach().cpu())
@@ -76,9 +83,9 @@ def loss(output, true_label):
 
 def create_benchmark_seq(dataset_path, dict_img_src, position_only=True):
     batch = 20
-    if dataset_path.endswith('speed/'):
+    if "speed" in dataset_path:
         dataloaders, dataset_sizes = create_dataloaders(dataset_path, batch)
-    elif dataset_path.endswith('exoromper/'):
+    elif "exoromper" in dataset_path:
         dataloaders, dataset_sizes = create_dataloaders(dataset_path, batch, dataset_name='exoromper')
     
     test_seq = torch.empty((0, 3, 224, 224))
@@ -90,9 +97,9 @@ def create_benchmark_seq(dataset_path, dict_img_src, position_only=True):
 
     for dn in dict_img_src:
         dl = dataloaders[dn] 
-        if dataset_path.endswith('speed/'):
+        if "speed" in dataset_path:
             imgs, lbls = next(iter(dl))
-        elif dataset_path.endswith('exoromper/'):
+        elif "exoromper" in dataset_path:
             imgs, lbls, fnms = next(iter(dl))
         imgs_np = imgs
         lbls_np = lbls
@@ -112,30 +119,42 @@ def create_benchmark_seq(dataset_path, dict_img_src, position_only=True):
 
 def create_benchmark_seq_batches(dataset_path, batch_size, num_batches, batch_compositions, position_only=True, seed=None):
     set_seeds() if seed == None else set_seeds(seed)
-    if dataset_path.endswith('speed/'):
+    if "speed" in dataset_path:
         dataloaders, dataset_sizes = create_dataloaders(dataset_path, batch_size)
-    elif dataset_path.endswith('exoromper/'):
+    elif "ex" in dataset_path:
         dataloaders, dataset_sizes = create_dataloaders(dataset_path, batch_size, dataset_name='exoromper')
+    elif "mnist" in dataset_path:
+        dataloaders, dataset_sizes = create_dataloaders(dataset_path, batch_size, dataset_name='mnist')
     
-    test_seq = torch.empty((num_batches, batch_size, 3, 224, 224))
-    if position_only:
-        labels   = torch.empty((num_batches, batch_size, 3))
-    else:
-        labels   = torch.empty((num_batches, batch_size, 7))
-    fnames = [["" for i in range(batch_size)] for j in range(num_batches)]
+    if "speed" in dataset_path or "ex" in dataset_path:
+        test_seq = torch.empty((num_batches, batch_size, 3, 224, 224))
+        if position_only:
+            labels   = torch.empty((num_batches, batch_size, 3))
+        else:
+            labels   = torch.empty((num_batches, batch_size, 7))
+        fnames = [["" for i in range(batch_size)] for j in range(num_batches)]
+    elif "mnist" in dataset_path:
+        test_seq = torch.empty((num_batches, batch_size, 1, 28, 28))
+        labels   = torch.empty((num_batches, batch_size, 1))
+        fnames = [["" for i in range(batch_size)] for j in range(num_batches)]
     
     for b in range(num_batches):
         idx_in_batch = 0
         for dn in batch_compositions[b]:
             dset = dataloaders[dn].dataset
             for i in range(batch_compositions[b][dn]):
-                img, lbl, fnm = dset.__getitem__(randint(0, len(dset)-1))
+                if "speed" in dataset_path or "exoromper" in dataset_path:
+                    img, lbl, fnm = dset.__getitem__(randint(0, len(dset)-1))
+                elif "mnist" in dataset_path:
+                    ri = randint(0, len(dset)-1)
+                    fnm = str(ri)
+                    img, lbl = dset.__getitem__(ri)
                 test_seq[b,idx_in_batch,:,:,:] = img
-                labels[b,idx_in_batch,:] = torch.from_numpy(lbl)
+                labels[b,idx_in_batch,:] = torch.from_numpy(np.array(lbl))
                 fnames[b][idx_in_batch] = fnm
                 idx_in_batch += 1
         if not(idx_in_batch == batch_size):
-            raise ValueError("Sum of batch compositions %i does not equal batch_size %i",(idx_in_batch, batch_size))
+            raise ValueError("Sum of batch compositions %i does not equal batch_size %i"%(idx_in_batch, batch_size))
 
     return test_seq, labels, fnames
 
@@ -149,7 +168,7 @@ def alg_flags(algs_to_test, dataset_path, batch_size, num_batches, batch_composi
         for (j, alg) in enumerate(algs_to_test):
             flags[i][j] = alg(test_seq[i])
             print("Test seq ",i," algorithm ",j," flagged: ",flags[i][j])
-    return fnames, flags
+    return test_seq, labels, fnames, flags
 
 def eval_flaggers(flaggers, load_model_path, test_seq, labels, indiv=True, refine_function=refine_model, loss_function = loss, fnprefix=""):
     costs_mean = {}
@@ -205,18 +224,30 @@ def load_categorical_loss_from_file(fname):
 def eval_flagger(ood_flagger, load_model_path, test_seq, labels, indiv=True, refine_function=refine_model, loss_function = loss):
     # Load model afresh each time so that it is not overwritten by previous benchmark call
     model, optimizer, start_epoch_idx, valid_loss, criterion, device = load_model_from_ckp(load_model_path)
+    dataset_name = determine_dataset_from_path(load_model_path)
     if indiv==True:
-        cost, acc = benchmark_individual(ood_flagger, model, optimizer, refine_function, loss_function, test_seq, labels)
+        cost, acc = benchmark_individual(ood_flagger, model, optimizer, refine_function, loss_function, test_seq, labels, dataset_name)
     else:
-        cost, acc = benchmark_batch(ood_flagger, model, optimizer, refine_function, loss_function, test_seq, labels)
+        cost, acc = benchmark_batch(ood_flagger, model, optimizer, refine_function, loss_function, test_seq, labels, dataset_name)
     return cost, acc
+
+def determine_dataset_from_path(load_model_path):
+    if "ex" in load_model_path:
+        return 'exoromper'
+    elif 'mnist' in load_model_path:
+        return 'mnist'
+    else:
+        raise("Unable to determine dataset type.")
 
 def create_scod_model(load_model_path, dataset, batch_size):
     # Load model afresh each time so that it is not overwritten by previous benchmark call
     model, optimizer, start_epoch_idx, valid_loss, criterion, device = load_model_from_ckp(load_model_path)
-    if dataset.endswith('exoromper/'):
-        dataloaders, dataset_sizes = create_dataloaders(dataset, batch_size, dataset_name="exoromper")
-    unc_model = init_scod(model, dataloaders["space"])
+    dataset_name = determine_dataset_from_path(load_model_path)
+    dataloaders, dataset_sizes = create_dataloaders(dataset, batch_size, dataset_name=dataset_name)
+    if "ex" in dataset_name:
+        unc_model = init_scod(model, dataloaders["space"], dataset_name)
+    elif 'mnist' in dataset_name:
+        unc_model = init_scod(model, dataloaders["mnist_train"], dataset_name)        
     return unc_model
 
 ## Functions to support batch using Jacobian diagonals
@@ -265,10 +296,13 @@ def batch_flagger_old(x, batch_size, unc_model, flag_limit=None, debug=False):
 
 ## Functions to support batch using Lt_J
 
-def get_Lt_J(xi, unc_model, debug):
+def get_Lt_J(xi, unc_model, debug, dist_layer=None):
     with autocast():
         z = unc_model.model(xi.cuda()) # get params of output dist
-        dist = unc_model.dist_constructor(z)
+        if hasattr(unc_model, 'dist_constructor'):
+            dist = unc_model.dist_constructor(z)
+        else:
+            dist = dist_layer
         Lt_z = dist.apply_sqrt_F(z).mean(dim=0) # L^\T theta
         # flatten
         Lt_z = Lt_z.view(-1)    
@@ -286,14 +320,14 @@ def kernel_LtJ(LtJ_1, LtJ_2, debug):
 def _ell_w_Ltj(ells, w):
     return np.sum([ells[i]*w[i] for i in range(len(w))], 0)
 
-def ds_scod_flagger(x, unc_model, flag_limit=None, debug=False):
+def ds_scod_flagger(x, unc_model, flag_limit=None, debug=False, dist_layer=None):
     if flag_limit == None:
         raise ValueError("flag_limit must be specified.")
     debug and print("x shape: ",x.shape)
     batch_size = x.shape[0]
 
     # Compute belief updates
-    ell = np.stack([get_Lt_J(x[i].unsqueeze(0), unc_model, debug) for i in range(batch_size)])
+    ell = np.stack([get_Lt_J(x[i].unsqueeze(0), unc_model, debug, dist_layer=dist_layer) for i in range(batch_size)])
     debug and print("ell shape: ",ell.shape)
     ell_sum = np.sum(ell, 0)
     debug and print("ell_sum shape: ",ell_sum.shape)
@@ -339,10 +373,10 @@ def ds_scod_flagger(x, unc_model, flag_limit=None, debug=False):
     return flags
 
 """Specify either threshold or a flag_limit"""
-def scod_flagger(x, unc_model, thres = None, flag_limit = None, debug = False):
+def scod_flagger(x, unc_model, thres = None, flag_limit = None, debug = False, dist_layer = None):
     if (thres == None and flag_limit == None) or (thres != None and flag_limit != None):
         raise ValueError("Exactly ONE of thres or flag_limit must be specified. Current thres: ", thres,". flag_limit: ", flag_limit)
-    uncs = np.ndarray.flatten(np.array([eval_scod(xi, unc_model) for xi in x]))
+    uncs = np.ndarray.flatten(np.array([eval_scod(xi, unc_model, dist_layer=dist_layer) for xi in x]))
     debug and print("uncs:",uncs)
     if thres != None:
         return [unc >= thres for unc in uncs]
