@@ -310,9 +310,19 @@ def create_dataloaders(root, batch_size, dataset_name = "speed"):
                                 transforms.ToTensor(),
                                 transforms.Normalize((0.1307,),(0.3801,))
                             ]))
+        kmnist_dataset = KMNIST(root="~/data/",train=True,download=True,transform=transforms.Compose([
+                                transforms.ToTensor(),
+                                transforms.Normalize((0.1307,),(0.3801,))
+                            ]))
+        emnist_dataset = EMNIST(root="~/data/",train=True,split="letters",download=True,transform=transforms.Compose([
+                                transforms.ToTensor(),
+                                transforms.Normalize((0.1307,),(0.3801,))
+                            ]))
         datasets = {'mnist_train': mnist_train,
                     'mnist_test': mnist_test,
-                    'fashion': fashion_dataset}
+                    'fashion': fashion_dataset,
+                    'kmnist': kmnist_dataset,
+                    'emnist': emnist_dataset}
     
     dnames = list(datasets.keys())
     dataloaders = {x: DataLoader(datasets[x], batch_size=batch_size, shuffle=True, num_workers=8) for x in dnames}
