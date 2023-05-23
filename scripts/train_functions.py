@@ -67,15 +67,21 @@ def train_model(model, scheduler, optimizer, criterion, dataloaders, device, dat
             running_loss = 0.0
 
             # batch loop
-            for inputs, labels, fnames in dataloaders[phase]:
+            for d in dataloaders[phase]:
+                if len(d) == 2:
+                    inputs, labels = d 
+                elif len(d) == 3:
+                    inputs, labels, fnames = d 
+                else:
+                    raise ValueError("Unrecognized. Dataloader entry has length {}".format(len(d)))
                 inputs = inputs.to(device)
-                labels = labels.to(device).float()
+                labels = labels.to(device)
 
                 optimizer.zero_grad()
 
                 with torch.set_grad_enabled(phase == 'train'):
                     outputs = model(inputs)
-                    loss = criterion(outputs, labels.float().cuda())
+                    loss = criterion(outputs, labels)
 
                     if phase == 'train':
                         loss.backward()
@@ -362,27 +368,32 @@ def set_up_model(dataset_name, spec_lr = 0.001):
                 nn.Linear(84,10)
             )
         initialized_model = initialized_model.to(device)
-        criterion = None # Custom loss to be specified during training
-        optimizer = torch.optim.Adam(initialized_model.parameters(), lr=1e-2)
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, 100)
+        criterion = torch.nn.CrossEntropyLoss() # Custom loss to be specified during training
+        optimizer = torch.optim.SGD(initialized_model.parameters(), lr=1e-2, momentum=0.9)  # all params trained
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=7, gamma=0.1)
 
     return initialized_model, scheduler, optimizer, criterion, device
 
-def main(num_epochs, dataloaders, dataset_sizes, resume=False, load_model_path=''):
+def main(dataset_name, 
+        num_epochs, 
+        dataloaders, 
+        dataset_sizes, 
+        ckp_path = "./checkpoint/current_checkpoint.pt", 
+        model_save_path = "./best_model/best_model.pt",
+        losses_path = "./losses/",
+        resume=False, 
+        load_model_path=''):
 
     """ Preparing the dataset for training, setting up model, running training, and exporting submission."""
 
-    initialized_model, exp_lr_scheduler, sgd_optimizer, criterion, device = set_up_model()
+    initialized_model, exp_lr_scheduler, sgd_optimizer, criterion, device = set_up_model(dataset_name)
     
     print("Resuming? ", resume)
 
     # Training
-    ckp_path = "./checkpoint/current_checkpoint.pt"
-    best_path = "./best_model/best_model.pt"
-    losses_path = "./losses/"
     if not resume:
         trained_model = train_model(initialized_model, exp_lr_scheduler, sgd_optimizer, criterion,
-                                dataloaders, device, dataset_sizes, 0, num_epochs, ckp_path, best_path, losses_path, np.Inf)
+                                dataloaders, device, dataset_sizes, 0, num_epochs, ckp_path, model_save_path, losses_path, np.Inf)
     else:
         # load the saved checkpoint
         model, optimizer, start_epoch_idx, valid_loss = load_ckp(load_model_path, initialized_model, sgd_optimizer)
@@ -391,9 +402,9 @@ def main(num_epochs, dataloaders, dataset_sizes, resume=False, load_model_path='
         print("valid_loss = {:.6f}".format(valid_loss))
 
         trained_model = train_model(model, exp_lr_scheduler, optimizer, criterion,
-                                dataloaders, device, dataset_sizes, start_epoch_idx, num_epochs, ckp_path, best_path, losses_path, valid_loss)
+                                dataloaders, device, dataset_sizes, start_epoch_idx, num_epochs, ckp_path, model_save_path, losses_path, valid_loss)
 
-    return ckp_path, best_path, losses_path
+    return ckp_path, model_save_path, losses_path
 
 
 if __name__ == "__main__":
