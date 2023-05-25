@@ -130,3 +130,6 @@ dmypy.json
 
 # local images
 local_imgs
+
+# unused losses
+losses/unused
