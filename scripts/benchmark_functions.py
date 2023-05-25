@@ -231,19 +231,19 @@ def eval_flagger(ood_flagger, load_model_path, test_seq, labels, indiv=True, ref
         cost, acc = benchmark_batch(ood_flagger, model, optimizer, refine_function, loss_function, test_seq, labels, dataset_name)
     return cost, acc
 
-def determine_dataset_from_path(load_model_path):
+def determine_root_from_path(load_model_path):
     if "ex" in load_model_path:
-        return 'exoromper'
+        return "datasets/exoromper/"
     elif 'mnist' in load_model_path:
         return 'mnist'
     else:
         raise("Unable to determine dataset type.")
 
-def create_scod_model(load_model_path, dataset, batch_size):
+def create_scod_model(load_model_path, dataset_name, batch_size, force_cpu=False):
     # Load model afresh each time so that it is not overwritten by previous benchmark call
-    model, optimizer, start_epoch_idx, valid_loss, criterion, device = load_model_from_ckp(load_model_path)
-    dataset_name = determine_dataset_from_path(load_model_path)
-    dataloaders, dataset_sizes = create_dataloaders(dataset, batch_size, dataset_name=dataset_name)
+    model, optimizer, start_epoch_idx, valid_loss, criterion, device = load_model_from_ckp(load_model_path, force_cpu=force_cpu)
+    root = determine_root_from_path(load_model_path)
+    dataloaders, dataset_sizes = create_dataloaders(root, batch_size, dataset_name=dataset_name)
     if "ex" in dataset_name:
         unc_model = init_scod(model, dataloaders["space"], dataset_name)
     elif 'mnist' in dataset_name:
@@ -373,10 +373,10 @@ def ds_scod_flagger(x, unc_model, flag_limit=None, debug=False, dist_layer=None)
     return flags
 
 """Specify either threshold or a flag_limit"""
-def scod_flagger(x, unc_model, thres = None, flag_limit = None, debug = False, dist_layer = None):
+def scod_flagger(x, unc_model, thres = None, flag_limit = None, debug = False, dist_layer = None, force_cpu = False):
     if (thres == None and flag_limit == None) or (thres != None and flag_limit != None):
         raise ValueError("Exactly ONE of thres or flag_limit must be specified. Current thres: ", thres,". flag_limit: ", flag_limit)
-    uncs = np.ndarray.flatten(np.array([eval_scod(xi, unc_model, dist_layer=dist_layer) for xi in x]))
+    uncs = np.ndarray.flatten(np.array([eval_scod(xi, unc_model, dist_layer=dist_layer, force_cpu=force_cpu) for xi in x]))
     debug and print("uncs:",uncs)
     if thres != None:
         return [unc >= thres for unc in uncs]

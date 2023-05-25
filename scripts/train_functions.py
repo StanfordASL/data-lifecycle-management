@@ -156,13 +156,13 @@ def load_ckp(checkpoint_fpath, model, optimizer):
     # return model, optimizer, epoch value, min validation loss 
     return model, optimizer, checkpoint['epoch'], valid_loss
 
-def load_model_from_ckp(load_model_path):
+def load_model_from_ckp(load_model_path, force_cpu=False):
     # Set up model
     if "ex" in load_model_path:
         dataset_name = 'exoromper'
     elif 'mnist' in load_model_path:
         dataset_name = 'mnist'
-    initialized_model, scheduler, optimizer, criterion, device = set_up_model(dataset_name)
+    initialized_model, scheduler, optimizer, criterion, device = set_up_model(dataset_name, force_cpu=force_cpu)
     # Load model from the saved checkpoint
     model, optimizer, start_epoch_idx, valid_loss = load_ckp(load_model_path, initialized_model, optimizer)
     return model, optimizer, start_epoch_idx, valid_loss, criterion, device
@@ -231,16 +231,20 @@ def single_model_eval(load_model_path, img, position_only=False):
     
 
 def create_dataloaders(root, batch_size, dataset_name = "speed"):
-    torch.manual_seed(11) # so train/test split is reproducible   
-    
-    if dataset_name == "speed" or dataset_name == "exoromper":
+    torch.manual_seed(11) # so train/test split is reproducible 
+    if ("speed" in dataset_name) or ("exoromper" in dataset_name):
         # Processing to match pre-trained networks
         data_transforms = transforms.Compose([
             transforms.Resize((224, 224)),
             transforms.ToTensor(),
             transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
+    elif ("mnist" in dataset_name):
+        data_transforms = None
+    else:
+        print("dataset name ", dataset_name)  
+        raise ValueError("dataset_name expected to be speed or exoromper. Unrecognized ", dataset_name)
 
-    if dataset_name == "speed":
+    if ("speed" in dataset_name):
         # Loading training set, using 20% for validation, 10% for test
         full_dataset = PyTorchSatellitePoseEstimationDataset('train', root, data_transforms, debug_mode=True)
         train_and_val_dataset, test_dataset = torch.utils.data.random_split(full_dataset, [int(len(full_dataset) * .9),
@@ -290,7 +294,7 @@ def create_dataloaders(root, batch_size, dataset_name = "speed"):
                     'test_10': test_dataset_10, 
                     'test_50': test_dataset_50, 
                     'test_90': test_dataset_90}
-    elif dataset_name == "exoromper":
+    elif ("exoromper" in dataset_name):
         full_dataset = PyTorchExoRomperDataset('all', root, data_transforms, debug_mode=False)
         train_and_val_dataset, test_dataset = torch.utils.data.random_split(full_dataset, [int(len(full_dataset) * .9),
                                                                                 int(len(full_dataset) - int(len(full_dataset) * .9))])
@@ -305,7 +309,7 @@ def create_dataloaders(root, batch_size, dataset_name = "speed"):
                     'space': space_dataset,
                     'earth': earth_dataset,
                     'lens_flare': lens_flare_dataset}
-    elif dataset_name == "mnist":
+    elif ("mnist" in dataset_name):
         mnist_dataset = MNIST(root="~/data/",train=True,download=True,transform=transforms.Compose([
                                 transforms.ToTensor(),
                                 transforms.Normalize((0.1307,),(0.3801,))
@@ -335,8 +339,12 @@ def create_dataloaders(root, batch_size, dataset_name = "speed"):
     dataset_sizes = {x: len(datasets[x]) for x in dnames}
     return dataloaders, dataset_sizes
 
-def set_up_model(dataset_name, spec_lr = 0.001):
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+def set_up_model(dataset_name, spec_lr = 0.001, force_cpu = False):
+    if force_cpu:
+        device = torch.device("cpu")
+        print("force_cpu is True. device: ", device)
+    else:
+        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     # print("CUDA IS AVAILABLE? ",torch.cuda.is_available())
     
     if 'exoromper' in dataset_name:

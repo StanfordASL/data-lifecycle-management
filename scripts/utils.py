@@ -320,12 +320,12 @@ class SatellitePoseEstimationDataset:
 def init_scod(model, dataloader_to_process, dataset_name):
     if "exoromper" in dataset_name or "speed" in dataset_name:
         # here, we interpret the output of the DNN as the mean of a Gaussian
-        dist_constructor = lambda theta: scod.distributions.Normal(loc=theta, scale=1.)
-        unc_model = scod.SCOD(model, dist_constructor, args={
+        unc_model = scod.SCOD(model, args={
             'num_eigs': 2,
             'sketch_type': 'srft',
         }, parameters=list(model.parameters())[-4:])
-        unc_model.process_dataloader(dataloader_to_process)
+        dist_layer = scod.distributions.NormalMeanParamLayer()
+        unc_model.process_dataloader(dataloader_to_process, dist_layer)
     elif "mnist" in dataset_name:
         unc_model = scod.SCOD(model, args={
             'num_eigs': 100,
@@ -336,8 +336,11 @@ def init_scod(model, dataloader_to_process, dataset_name):
         unc_model.process_dataloader(dataloader_to_process, dist_layer)
     return unc_model
 
-def eval_scod(input, unc_model, dist_layer = None):
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+def eval_scod(input, unc_model, dist_layer = None, force_cpu = False):
+    if force_cpu:
+        device = torch.device("cpu")
+    else:
+        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     yhats, sigs = unc_model(input.to(device).unsqueeze(0))
     if dist_layer is None:
         unc = sigs.cpu().detach().numpy()
@@ -557,4 +560,7 @@ class PyTorchExoRomperDataset(Dataset):
 
         return
     
-    
+def remove_prefix(text, prefix):
+    if text.startswith(prefix):
+        return text[len(prefix):]
+    return text
