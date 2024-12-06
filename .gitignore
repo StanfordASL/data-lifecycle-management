@@ -127,3 +127,7 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# Misc
+saved_data/alg_specific/*.npz
+saved_data/costs_and_accs/*.npz

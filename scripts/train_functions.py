@@ -16,8 +16,6 @@ def random_number(seed = None):
 
 def refine_model(model, optimizer, inputs, labels, num_epochs, spec_lr = 0.001, verbose = False):
     # https://machinelearningmastery.com/update-neural-network-models-with-more-data/
-    # Batch new data?
-    # Ensemble model?
     _, _, _, criterion, device = set_up_model(spec_lr=spec_lr) # Can be reduced to not overfit
     for epoch in range(num_epochs):
         verbose and print('Epoch {}/{}'.format(epoch+1, num_epochs))
@@ -213,6 +211,12 @@ def single_model_eval(load_model_path, img, position_only=False):
     
 
 def create_dataloaders(root, batch_size, dataset_name = "speed"):
+    """ Dataloaders use ...
+            90%-10% train/test split.
+            80%-20% train/validation split.
+        
+        Returns dictionary dataset-specific dataloaders and dataset sizes. """
+
     torch.manual_seed(11) # so train/test split is reproducible   
      
     # Processing to match pre-trained networks
@@ -229,7 +233,7 @@ def create_dataloaders(root, batch_size, dataset_name = "speed"):
         train_dataset, val_dataset = torch.utils.data.random_split(train_and_val_dataset, [int(len(train_and_val_dataset) * .8),
                                                                                 int(len(train_and_val_dataset) * .2)])
     
-        full_dataset_000 = PyTorchSatellitePoseEstimationDatasetNoisy('train', root, data_transforms, debug_mode=True, dead_percent=0.0)
+        full_dataset_000 = PyTorchSatellitePoseEstimationDatasetNoisy('train', root, data_transforms, debug_mode=True, dead_percent=0.0) # dead_percent drops a percentage of pixels from image
         _, test_dataset_000 = torch.utils.data.random_split(full_dataset_000, [int(len(full_dataset_000) * .9),
                                                                                 int(len(full_dataset_000) * .1)])
 
@@ -294,13 +298,11 @@ def create_dataloaders(root, batch_size, dataset_name = "speed"):
 
 def set_up_model(spec_lr = 0.001):
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    # print("CUDA IS AVAILABLE? ",torch.cuda.is_available())
-    
 
     # Getting pre-trained model and replacing the last fully connected layer
-    initialized_model = models.resnet18(pretrained=True)
+    initialized_model = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1) # default imagenet1k weights
     num_ftrs = initialized_model.fc.in_features
-    initialized_model.fc = torch.nn.Linear(num_ftrs, 3)
+    initialized_model.fc = torch.nn.Linear(num_ftrs, 3) # perform classification on pre-trained imagenet features 
     initialized_model = initialized_model.to(device)  # Note: we are finetuning the model (all params trainable)
 
     # Setting up the learning process
@@ -324,7 +326,7 @@ def main(num_epochs, dataloaders, dataset_sizes, resume=False, load_model_path='
     losses_path = "./losses/"
     if not resume:
         trained_model = train_model(initialized_model, exp_lr_scheduler, sgd_optimizer, criterion,
-                                dataloaders, device, dataset_sizes, 0, num_epochs, ckp_path, best_path, losses_path, np.Inf)
+                                dataloaders, device, dataset_sizes, 0, num_epochs, ckp_path, best_path, losses_path, np.inf)
     else:
         # load the saved checkpoint
         model, optimizer, start_epoch_idx, valid_loss = load_ckp(load_model_path, initialized_model, sgd_optimizer)
