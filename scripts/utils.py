@@ -179,7 +179,7 @@ def sim_dead_pixels_numpy(img, percent):
         new_img[b, a, :] = np.array([255, 255, 255])
     return new_img
 
-def sim_dead_pixels(img, percent):
+def sim_dead_pixels(img, percent): # simulates image corruption --> distribution shift
     if type(img)==Image.Image:
         error('PIL image passed in.')
     elif type(img)==np.ndarray:
@@ -305,23 +305,20 @@ class SatellitePoseEstimationDataset:
             ax.arrow(xa[0], ya[0], xa[1] - xa[0], ya[1] - ya[0], head_width=30, color='r')
             ax.arrow(xa[0], ya[0], xa[2] - xa[0], ya[2] - ya[0], head_width=30, color='g')
             ax.arrow(xa[0], ya[0], xa[3] - xa[0], ya[3] - ya[0], head_width=30, color='b')
-            
-            # # TEMP CODE
-            # q_fake = [q[0] +0.1, q[1]-0.1, q[2]+0.1, q[3]+0.1]
-            # r_fake = [1.1*r[0], r[1], 1.1*r[2]]
-            # xa, ya = project(q_fake, r_fake)
-            # ax.arrow(xa[0], ya[0], xa[1] - xa[0], ya[1] - ya[0], head_width=10, color='r')
-            # ax.arrow(xa[0], ya[0], xa[2] - xa[0], ya[2] - ya[0], head_width=10, color='g')
-            # ax.arrow(xa[0], ya[0], xa[3] - xa[0], ya[3] - ya[0], head_width=10, color='b')
 
         return
 
 
+# SCOD offers a few hyperparameters to influence OOD detection performance.
+# num_eigs: refers to the matrix sketching rank used to recover the model's Hessian, i.e., the second derivative of the loss.
+#   if num_eigs = num_model_parameters, then the approximation is exact; however, the fewer the eigenvalues used in your approximation, the more efficient computation will be.
+# sketch_type: refers to the matrix sketching technique used, e.g., srft, gaussian. In practice, we've found srft to be quite effective.
+# for an exhaustive list of hyperparameters, see SCOD-module documentation: https://github.com/StanfordASL/scod-module/blob/main/scod/scod.py 
 def init_scod(model, dataloader_to_process):
     # here, we interpret the output of the DNN as the mean of a Gaussian
     dist_constructor = lambda theta: scod.distributions.Normal(loc=theta, scale=1.)
     unc_model = scod.SCOD(model, dist_constructor, args={
-        'num_eigs': 2,
+        'num_eigs': 2, # retain the two most influential directions for the model's construction in the n-dimensional parameter space. Here, n is the number of parameters in the model.
         'sketch_type': 'srft',
     }, parameters=list(model.parameters())[-4:])
     unc_model.process_dataloader(dataloader_to_process)

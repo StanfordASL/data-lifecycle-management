@@ -15,7 +15,7 @@ def random_number(seed = None):
     return torch.rand(1)    
 
 def refine_model(model, optimizer, inputs, labels, num_epochs, spec_lr = 0.001, verbose = False):
-    # https://machinelearningmastery.com/update-neural-network-models-with-more-data/
+    # refine_model documentation: https://machinelearningmastery.com/update-neural-network-models-with-more-data/
     _, _, _, criterion, device = set_up_model(spec_lr=spec_lr) # Can be reduced to not overfit
     for epoch in range(num_epochs):
         verbose and print('Epoch {}/{}'.format(epoch+1, num_epochs))
@@ -45,10 +45,10 @@ def train_model(model, scheduler, optimizer, criterion, dataloaders, device, dat
     train_loss_values = []
     valid_loss_values = []
     # epoch loop
-    for epoch in range(start_epochs, start_epochs+num_epochs):
+    for epoch in range(start_epochs, start_epochs+num_epochs): # epoch loop -- typically 40 epochs for Somrita's study
         print('Epoch {}/{}'.format(epoch+1, start_epochs+num_epochs))
         print('-' * 10)
-        for phase in ['train', 'val']:
+        for phase in ['train', 'val']: # for each epoch, evaluate the model's training and validation loss
             if phase == 'train':
                 model.train()  # Set model to training mode
             else:
@@ -67,7 +67,7 @@ def train_model(model, scheduler, optimizer, criterion, dataloaders, device, dat
                     outputs = model(inputs)
                     loss = criterion(outputs, labels.float().cuda())
 
-                    if phase == 'train':
+                    if phase == 'train': # gradient steps are only taken in "training" mode
                         loss.backward()
                         optimizer.step()
                 running_loss += loss.item() * inputs.size(0)
@@ -211,7 +211,7 @@ def single_model_eval(load_model_path, img, position_only=False):
     
 
 def create_dataloaders(root, batch_size, dataset_name = "speed"):
-    """ Dataloaders use ...
+    """ Dataloaders for either SPEED or ExoRomper use a ...
             90%-10% train/test split.
             80%-20% train/validation split.
         
@@ -233,7 +233,9 @@ def create_dataloaders(root, batch_size, dataset_name = "speed"):
         train_dataset, val_dataset = torch.utils.data.random_split(train_and_val_dataset, [int(len(train_and_val_dataset) * .8),
                                                                                 int(len(train_and_val_dataset) * .2)])
     
-        full_dataset_000 = PyTorchSatellitePoseEstimationDatasetNoisy('train', root, data_transforms, debug_mode=True, dead_percent=0.0) # dead_percent drops a percentage of pixels from image
+        # use sim_dead_pixels in utils.py to create test sets with various percentages of the image dropped
+        # here, we manually introduce a distribution shift whereas ExoRomper has labels on Earth-only and space-only backgrounds plus images corrupted by lens flare
+        full_dataset_000 = PyTorchSatellitePoseEstimationDatasetNoisy('train', root, data_transforms, debug_mode=True, dead_percent=0.0) 
         _, test_dataset_000 = torch.utils.data.random_split(full_dataset_000, [int(len(full_dataset_000) * .9),
                                                                                 int(len(full_dataset_000) * .1)])
 
@@ -276,7 +278,7 @@ def create_dataloaders(root, batch_size, dataset_name = "speed"):
                     'test_50': test_dataset_50, 
                     'test_90': test_dataset_90}
         dnames = ['train', 'val', 'test', 'test_000', 'test_0001', 'test_0005', 'test_001', 'test_01', 'test_10', 'test_50', 'test_90']
-    elif dataset_name == "exoromper":
+    elif dataset_name == "exoromper": # ExoRomper distribution shift is our canonical Earth in background & lens-flare images
         full_dataset = PyTorchExoRomperDataset('all', root, data_transforms, debug_mode=False)
         train_and_val_dataset, test_dataset = torch.utils.data.random_split(full_dataset, [int(len(full_dataset) * .9),
                                                                                 int(len(full_dataset) - int(len(full_dataset) * .9))])
@@ -300,9 +302,9 @@ def set_up_model(spec_lr = 0.001):
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
     # Getting pre-trained model and replacing the last fully connected layer
-    initialized_model = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1) # default imagenet1k weights
+    initialized_model = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1) # default imagenet1k weights, "pretrained" keyword is since deprecated
     num_ftrs = initialized_model.fc.in_features
-    initialized_model.fc = torch.nn.Linear(num_ftrs, 3) # perform classification on pre-trained imagenet features 
+    initialized_model.fc = torch.nn.Linear(num_ftrs, 3) # perform classification on pre-trained imagenet features
     initialized_model = initialized_model.to(device)  # Note: we are finetuning the model (all params trainable)
 
     # Setting up the learning process
@@ -314,7 +316,7 @@ def set_up_model(spec_lr = 0.001):
 
 def main(num_epochs, dataloaders, dataset_sizes, resume=False, load_model_path=''):
 
-    """ Preparing the dataset for training, setting up model, running training, and exporting submission."""
+    """Preparing the dataset for training, setting up model, running training, and exporting submission."""
 
     initialized_model, exp_lr_scheduler, sgd_optimizer, criterion, device = set_up_model()
     

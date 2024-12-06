@@ -11,7 +11,7 @@ from .train_functions import load_model_from_ckp, create_dataloaders, refine_mod
 from .utils import init_scod, eval_scod, plot_images, set_seeds
 
 
-
+# default benchmark refines on individually on OOD obs. we typically use small batch sizes in this study
 def benchmark_individual(OOD_flagger, model, optimizer, refine_model, loss, test_seq, labels, num_refine_epochs = 4, refine_lr = 0.001):
     flagged = np.zeros(len(test_seq))
     outs    = np.zeros_like(labels)
@@ -23,7 +23,7 @@ def benchmark_individual(OOD_flagger, model, optimizer, refine_model, loss, test
         else:
             print("FLAGGED at index ",ind)
             true_label = labels[ind]
-            model = refine_model(model, optimizer, input, true_label, num_refine_epochs, spec_lr=refine_lr)
+            model = refine_model(model, optimizer, input, true_label, num_refine_epochs, spec_lr=refine_lr) # refine model with techniques from continual learning, e.g., see refine_model documentation
             flagged[ind] = True
             outs[ind] = model(input).detach().cpu()
     # Calculate metrics
@@ -155,7 +155,7 @@ def eval_flaggers(flaggers, load_model_path, test_seq, labels, indiv=True, refin
     costs_mean = {}
     accs_mean = {}
     accs_std = {}
-    for (i,flagger) in enumerate(flaggers):
+    for (i,flagger) in enumerate(flaggers): # eval flaggers enumerated in evaluation_benchmark.ipynb with baselines as defined in Somrita's paper
         alg, algname = flagger
         print("Evaluating algorithm ",algname)
         cost, acc = eval_flagger(alg, load_model_path, test_seq, labels, indiv=indiv, refine_function=refine_function, loss_function = loss_function)
